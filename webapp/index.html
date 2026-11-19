@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>VICEKEYS</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<style>
+body{margin:0;background:#0B0914}
+@keyframes up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes fade{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+@keyframes drop{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes glow{0%,100%{box-shadow:0 0 18px #FF3E7F55}50%{box-shadow:0 0 30px #00F0FF66}}
+.sheet{animation:up .3s cubic-bezier(.2,.8,.2,1)}.screen{animation:fade .25s ease-out}.toast{animation:drop .25s ease-out}
+@media (prefers-reduced-motion:reduce){.sheet,.screen,.toast{animation:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+const tg = window.Telegram && window.Telegram.WebApp;
+const user = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || { first_name: "Guest" };
+const haptic = (t = "light") => { try { tg.HapticFeedback.impactOccurred(t); } catch (e) {} };
+
+const api = async (path, body) => {
+  const r = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", "X-Init-Data": (tg && tg.initData) || "" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.status); }
+  return r.json();
+};
+
+const T = {
+  ru: {
+    catalog: "Каталог", keys: "Мои ключи", support: "Поддержка", soon: "Скоро", notify: "Уведомить", subscribed: "Вы подписаны ✓",
+    subscribedToast: "Подписка оформлена", pcTitle: "GTA VI на PC — скоро", pcText: "Релиз ПК-версии пока не объявлен. Мы напишем, когда ключи появятся в продаже.",
+    select: "Выбрать", stock: "В наличии", pcs: "шт.", region: "Регион", howto: "Как активировать", buy: "Купить за", outStock: "Нет в наличии",
+    act1: (p) => `Войдите в аккаунт ${p === "ps5" ? "PlayStation" : "Xbox"} нужного региона.`, act2: "Откройте «Погасить код» и введите ключ.", act3: "Скачайте игру и запустите.",
+    pay: "Оплата", payStars: "Оплатить", network: "Сеть", amount: "Сумма", left: "Осталось", paid: "Я оплатил", cryptoLabel: "Крипто (USDT)",
+    copied: "Скопировано", cancelled: "Оплата отменена", success: "Оплата прошла", successText: "Ключ отправлен вам в чат и сохранён во вкладке «Мои ключи».",
+    waitTitle: "Проверяем платёж", waitText: "Как только платёж подтвердится, мы сразу пришлём вам ключ в чат с ботом и во вкладку «Мои ключи». Обычно это занимает несколько минут.",
+    copyKey: "Скопировать ключ", toKeys: "Перейти в «Мои ключи»", myKeys: "Мои ключи", issued: "Выдан", pending: "Ожидает оплаты",
+    pendingText: "Ключ появится сразу после подтверждения оплаты.", emptyText: "Здесь появятся купленные ключи", toCatalog: "В каталог",
+    askSupport: "Написать в поддержку", loadErr: "Откройте магазин через бота в Telegram.", payId: "Pay ID",
+    banner: ["Мгновенная выдача", "Гарантия замены", "Проверенные ключи"],
+    sheetTrust: ["Ключ придёт сразу после оплаты", "Если ключ не подойдёт — заменим или вернём деньги", "Каждый ключ проверяем перед выдачей"],
+    payTrust: "Сразу после оплаты мы пришлём вам ключ — он появится здесь, в чате с ботом и во вкладке «Мои ключи». Деньги списываются только за выданный ключ.",
+    desc: { std: "Базовая игра: кампания Лусии и Джейсона, открытый мир Леонида.", ult: "Всё из Standard + набор Vice Sunset, ранний доступ к DLC и эксклюзивный транспорт." },
+    faq: [
+      ["Как активировать ключ в другом регионе?", "Аккаунт магазина должен совпадать с регионом ключа. Создайте аккаунт нужного региона и активируйте ключ в разделе «Погасить код»."],
+      ["Сколько ждать после оплаты криптой?", "TON — до 2 минут, USDT TRC-20 — до 5 минут после 1 подтверждения сети. Ключ появится во вкладке «Мои ключи»."],
+      ["Ключи валидны?", "Да. Каждый ключ проверяется перед выдачей. Если не активируется — заменим или вернём деньги."],
+      ["Что если я указал не тот регион?", "Напишите в поддержку до активации — поможем обменять."],
+      ["Можно ли оплатить Stars?", "Да, выберите ⭐ в переключателе валюты на витрине."],
+    ],
+  },
+  en: {
+    catalog: "Catalog", keys: "My keys", support: "Support", soon: "Soon", notify: "Notify me", subscribed: "Subscribed ✓",
+    subscribedToast: "Subscribed", pcTitle: "GTA VI on PC — coming soon", pcText: "The PC release date is not announced yet. We will message you as soon as keys go on sale.",
+    select: "Select", stock: "In stock", pcs: "pcs", region: "Region", howto: "How to activate", buy: "Buy for", outStock: "Out of stock",
+    act1: (p) => `Sign in to the ${p === "ps5" ? "PlayStation" : "Xbox"} account of the matching region.`, act2: "Open “Redeem code” and enter the key.", act3: "Download the game and play.",
+    pay: "Payment", payStars: "Pay", network: "Network", amount: "Amount", left: "Time left", paid: "I have paid", cryptoLabel: "Crypto (USDT)",
+    copied: "Copied", cancelled: "Payment cancelled", success: "Payment received", successText: "The key has been sent to your chat and saved in “My keys”.",
+    waitTitle: "Checking your payment", waitText: "As soon as the payment is confirmed, we will send the key to your bot chat and to “My keys”. It usually takes a few minutes.",
+    copyKey: "Copy key", toKeys: "Go to “My keys”", myKeys: "My keys", issued: "Issued", pending: "Awaiting payment",
+    pendingText: "Your key will appear right after the payment is confirmed.", emptyText: "Purchased keys will appear here", toCatalog: "To catalog",
+    askSupport: "Contact support", loadErr: "Open the store through the bot in Telegram.", payId: "Pay ID",
+    banner: ["Instant delivery", "Replacement guarantee", "Verified keys"],
+    sheetTrust: ["Your key arrives right after payment", "If a key fails, we replace it or refund you", "Every key is checked before delivery"],
+    payTrust: "Right after payment we will send you the key — it shows up here, in your bot chat and in “My keys”. You are charged only for a delivered key.",
+    desc: { std: "The base game: Lucia and Jason's campaign, the open world of Leonida.", ult: "Everything in Standard + Vice Sunset pack, early DLC access and exclusive vehicles." },
+    faq: [
+      ["How do I activate a key in another region?", "Your store account must match the key's region. Create an account for that region and redeem the key under “Redeem code”."],
+      ["How long does crypto payment take?", "TON — up to 2 minutes, USDT TRC-20 — up to 5 minutes after 1 network confirmation. The key appears in “My keys”."],
+      ["Are the keys valid?", "Yes. Every key is verified before delivery. If it does not activate, we replace it or refund you."],
+      ["What if I picked the wrong region?", "Contact support before activating — we will help you exchange it."],
+      ["Can I pay with Stars?", "Yes, pick ⭐ in the currency switch on the catalog."],
+    ],
+  },
+};
+
+const REGION_LABELS = { GL: "Global", TR: "Turkey (TR)", UA: "Ukraine (UA)", US: "USA (US)", EU: "Europe (EU)" };
+const ED_NAMES = { std: "GTA VI: Standard Edition", ult: "GTA VI: Ultimate Edition" };
+const PLATFORMS = [{ id: "ps5", label: "PS5" }, { id: "xbox", label: "Xbox Series X|S" }, { id: "pc", label: "PC", soon: true }];
+const PL = { ps5: "PS5", xbox: "Xbox Series X|S" };
+
+const usdtV = (B, ed, rg, d = true) => B.editions[ed].usdt * B.regions[rg] * (d ? B.discount : 1);
+const starsV = (B, ed, rg, d = true) => Math.max(1, Math.round(B.editions[ed].stars * B.regions[rg] * (d ? B.discount : 1)));
+const price = (B, ed, rg, cur, d = true) => (cur === "usdt" ? usdtV(B, ed, rg, d).toFixed(2) + " USDT" : starsV(B, ed, rg, d) + " ⭐");
+const stockOf = (B, plat, ed, rg) => {
+  const s = ((B.stock[plat] || {})[ed]) || {};
+  return rg ? (s[rg] || 0) : Object.values(s).reduce((a, b) => a + b, 0);
+};
+
+const g = "bg-gradient-to-r from-[#FF3E7F] via-[#8A2BE2] to-[#00F0FF]";
+const glass = "bg-white/5 backdrop-blur-md border border-white/10";
+const wrap = "relative mx-auto flex h-screen max-w-md flex-col overflow-hidden text-white";
+const wrapStyle = { background: "#0B0914", fontFamily: "'Trebuchet MS','Segoe UI',sans-serif" };
+
+function App() {
+  const [lang, setLang] = useState(() => { try { return localStorage.getItem("lang"); } catch (e) { return null; } });
+  const [B, setB] = useState(null);
+  const [err, setErr] = useState(false);
+  const [tab, setTab] = useState("catalog");
+  const [cur, setCur] = useState("usdt");
+  const [plat, setPlat] = useState("ps5");
+  const [sheet, setSheet] = useState(null);
+  const [region, setRegion] = useState("GL");
+  const [order, setOrder] = useState(null);
+  const [doneId, setDoneId] = useState(null);
+  const [step, setStep] = useState("browse");
+  const [subscribed, setSubscribed] = useState(false);
+  const [toastMsg, setToastMsg] = useState(null);
+  const L = T[lang || "ru"];
+
+  const load = useCallback(async () => { try { setB(await api("/api/bootstrap")); } catch (e) { setErr(true); } }, []);
+  const toast = useCallback((m) => { setToastMsg(m); setTimeout(() => setToastMsg(null), 2000); }, []);
+  const copy = (text) => { try { navigator.clipboard.writeText(text); } catch (e) {} haptic("medium"); toast(L.copied); };
+  const pickLang = (l) => { try { localStorage.setItem("lang", l); } catch (e) {} setLang(l); };
+
+  useEffect(() => { try { tg.ready(); tg.expand(); } catch (e) {} load(); }, []);
+  useEffect(() => { if (tab === "keys" || tab === "catalog") load(); }, [tab]);
+
+  const back = useCallback(() => {
+    if (step === "done") { setStep("browse"); setTab("keys"); }
+    else if (step === "pay") setStep("browse");
+    else if (sheet) setSheet(null);
+  }, [step, sheet]);
+
+  useEffect(() => {
+    const bb = tg && tg.BackButton; if (!bb) return;
+    (sheet || step !== "browse") ? bb.show() : bb.hide();
+    bb.onClick(back);
+    return () => bb.offClick(back);
+  }, [sheet, step, back]);
+
+  if (!lang) {
+    return (
+      <div className={wrap + " items-center justify-center px-6"} style={wrapStyle}>
+        <div className="screen w-full text-center">
+          <div className="mb-2 text-4xl font-black italic tracking-tight"><span className={g + " bg-clip-text text-transparent"}>VICE</span>KEYS</div>
+          <p className="mb-5 mt-6 text-white/70">Выберите язык / Choose language</p>
+          <div className="space-y-3">
+            {[["ru", "🇷🇺  Русский"], ["en", "🇬🇧  English"]].map(([id, l]) => (
+              <button key={id} onClick={() => { haptic("medium"); pickLang(id); }} className={glass + " min-h-[56px] w-full rounded-2xl text-lg font-bold"}>{l}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (err) return <div className={wrap + " items-center justify-center px-6 text-center"} style={wrapStyle}>{L.loadErr}</div>;
+  if (!B) return <div className={wrap + " items-center justify-center"} style={wrapStyle}>...</div>;
+
+  const startPay = () => { haptic("medium"); setOrder({ ed: sheet, plat, region }); setSheet(null); setStep("pay"); };
+  const onPaid = (id) => { haptic("heavy"); setDoneId(id); setStep("done"); };
+  const off = Math.round((1 - B.discount) * 100);
+
+  return (
+    <div className={wrap} style={wrapStyle}>
+      <div className="pointer-events-none absolute -top-24 -right-24 h-64 w-64 rounded-full opacity-30 blur-3xl" style={{ background: "#FF3E7F" }} />
+      <div className="pointer-events-none absolute bottom-40 -left-24 h-64 w-64 rounded-full opacity-20 blur-3xl" style={{ background: "#8A2BE2" }} />
+      {toastMsg && <div className={"toast fixed left-1/2 top-4 z-50 rounded-full px-4 py-2 text-sm font-semibold " + g}>{toastMsg}</div>}
+
+      <header className="relative z-10 flex items-center justify-between gap-2 px-4 pb-2" style={{ paddingTop: "max(env(safe-area-inset-top),14px)" }}>
+        <div className="text-lg font-black italic tracking-tight"><span className={g + " bg-clip-text text-transparent"}>VICE</span>KEYS</div>
+        {tab === "catalog" && step === "browse" && (
+          <div className={glass + " flex rounded-full p-1 text-sm"}>
+            {[["usdt", "USDT"], ["stars", "Stars ⭐"]].map(([id, l]) => (
+              <button key={id} onClick={() => { haptic(); setCur(id); }} className={"min-h-[36px] rounded-full px-3 font-semibold " + (cur === id ? g : "text-white/60")}>{l}</button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <button onClick={() => { haptic(); pickLang(lang === "ru" ? "en" : "ru"); }} className={glass + " flex h-11 min-w-[44px] items-center justify-center rounded-full px-2 text-xs font-bold"}>{lang === "ru" ? "RU" : "EN"}</button>
+          <div className={"flex h-9 w-9 items-center justify-center rounded-full font-bold " + g}>{(user.first_name || "?")[0]}</div>
+        </div>
+      </header>
+
+      <main className="relative z-10 flex-1 overflow-y-auto px-4 pb-24">
+        {step === "pay" && <Pay B={B} L={L} lang={lang} order={order} copy={copy} toast={toast} onPaid={onPaid} />}
+        {step === "done" && <Done L={L} id={doneId} copy={copy} onKeys={() => { setStep("browse"); setTab("keys"); load(); }} />}
+
+        {step === "browse" && tab === "catalog" && (
+          <div className="screen space-y-4 pt-2">
+            <div className="flex items-center justify-between gap-1 rounded-xl border border-[#00F0FF]/20 bg-[#00F0FF]/5 px-3 py-2 text-[11px] text-white/80">
+              {L.banner.map((b, i) => <span key={i}>{i === 0 ? "⚡" : "🛡️"} {b}</span>)}
+            </div>
+            <div className="flex gap-2 overflow-x-auto">
+              {PLATFORMS.map((p) => (
+                <button key={p.id} onClick={() => { haptic(); setPlat(p.id); }} className={"min-h-[44px] shrink-0 rounded-xl px-4 text-sm font-semibold " + (plat === p.id ? g : glass)}>
+                  {p.label}{p.soon && <span className="ml-2 rounded bg-[#00F0FF] px-1.5 py-0.5 text-[10px] font-bold text-black">{L.soon}</span>}
+                </button>
+              ))}
+            </div>
+            {plat === "pc" ? (
+              <div className={glass + " rounded-2xl p-6 text-center"}>
+                <div className="text-4xl">🖥️</div>
+                <h3 className="mt-2 text-lg font-bold">{L.pcTitle}</h3>
+                <p className="mt-2 text-sm text-white/60">{L.pcText}</p>
+                <button onClick={() => { haptic("medium"); setSubscribed(true); toast(L.subscribedToast); }} className={"mt-4 min-h-[48px] w-full rounded-xl font-bold " + (subscribed ? "border border-[#00F0FF] text-[#00F0FF]" : g)}>
+                  {subscribed ? L.subscribed : "🔔 " + L.notify}
+                </button>
+              </div>
+            ) : Object.keys(B.editions).map((ed) => (
+              <div key={ed} className={glass + " overflow-hidden rounded-2xl"}>
+                <div className="relative flex h-32 items-end p-3" style={{ background: ed === "ult" ? "linear-gradient(135deg,#8A2BE2,#FF3E7F 60%,#ffb347)" : "linear-gradient(135deg,#FF3E7F,#8A2BE2 60%,#00F0FF)" }}>
+                  <span className="absolute right-3 top-3 rounded-full bg-black/50 px-2 py-1 text-xs">{PL[plat]}</span>
+                  {off > 0 && <span className="absolute left-3 top-3 rounded-full bg-[#00F0FF] px-2 py-1 text-xs font-black text-black">-{off}%</span>}
+                  <div className="text-4xl font-black italic leading-none" style={{ textShadow: "0 2px 12px #0008" }}>VI</div>
+                </div>
+                <div className="p-4">
+                  <h3 className="font-bold">{ED_NAMES[ed]}</h3>
+                  <p className="mt-1 text-xs text-white/50">{L.stock}: {stockOf(B, plat, ed)} {L.pcs}</p>
+                  <div className="mt-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-lg font-black text-[#00F0FF]">{price(B, ed, "GL", cur)}</div>
+                      {off > 0 && <div className="text-xs text-white/40 line-through">{price(B, ed, "GL", cur, false)}</div>}
+                    </div>
+                    <button onClick={() => { haptic(); setRegion("GL"); setSheet(ed); }} className={"min-h-[44px] rounded-xl px-5 font-bold " + g}>{L.select}</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {step === "browse" && tab === "keys" && (
+          <div className="screen space-y-3 pt-2">
+            <h2 className="text-lg font-bold">{L.myKeys}</h2>
+            {B.keys.length === 0 ? (
+              <div className="py-16 text-center">
+                <div className="text-5xl">📦</div>
+                <p className="mt-3 text-white/60">{L.emptyText}</p>
+                <button onClick={() => setTab("catalog")} className={"mt-4 min-h-[48px] rounded-xl px-6 font-bold " + g}>{L.toCatalog}</button>
+              </div>
+            ) : B.keys.map((k) => (
+              <div key={k.id} className={glass + " rounded-2xl p-4"}>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-bold">{ED_NAMES[k.edition]}</h3>
+                  <span className={"shrink-0 rounded-full px-2 py-1 text-xs font-semibold " + (k.key ? "bg-[#00F0FF]/20 text-[#00F0FF]" : "bg-[#FF3E7F]/20 text-[#FF3E7F]")}>{k.key ? L.issued : L.pending}</span>
+                </div>
+                <p className="mt-1 text-xs text-white/50">{PL[k.platform]} · {REGION_LABELS[k.region]} · {k.created}</p>
+                {k.key ? (
+                  <>
+                    <div className="mt-3 rounded-lg bg-black/40 p-3 text-center font-mono tracking-widest">{k.key}</div>
+                    <button onClick={() => copy(k.key)} className="mt-2 min-h-[44px] w-full rounded-xl border border-white/10 font-semibold">📋 {L.copyKey}</button>
+                  </>
+                ) : <p className="mt-3 text-sm text-white/50">{L.pendingText}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {step === "browse" && tab === "support" && (
+          <div className="screen space-y-3 pt-2">
+            <h2 className="text-lg font-bold">{L.support}</h2>
+            {L.faq.map(([q, a], i) => <Faq key={i} q={q} a={a} />)}
+            <button onClick={() => { haptic(); const u = "https://t.me/" + B.support; tg && tg.openTelegramLink ? tg.openTelegramLink(u) : window.open(u); }} className={"min-h-[48px] w-full rounded-xl font-bold " + g}>✈️ {L.askSupport}</button>
+          </div>
+        )}
+      </main>
+
+      {step === "browse" && (
+        <nav className="absolute inset-x-0 bottom-0 z-20 flex border-t border-white/10 backdrop-blur-md" style={{ paddingBottom: "env(safe-area-inset-bottom)", background: "rgba(11,9,20,.85)" }}>
+          {[["catalog", "🛒", L.catalog], ["keys", "🔑", L.keys], ["support", "💬", L.support]].map(([id, ic, l]) => (
+            <button key={id} onClick={() => { haptic(); setTab(id); }} className={"flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 text-xs " + (tab === id ? "text-[#FF3E7F]" : "text-white/50")}>
+              <span className="text-xl">{ic}</span>{l}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {sheet && (
+        <div className="absolute inset-0 z-30 flex items-end bg-black/60" onClick={() => setSheet(null)}>
+          <div className="sheet max-h-[88%] w-full overflow-y-auto rounded-t-3xl border-t border-white/10 p-5" style={{ backgroundColor: "#141021", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }} onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-bold">{ED_NAMES[sheet]}</h3>
+              <button onClick={() => setSheet(null)} className="flex h-11 w-11 items-center justify-center text-xl">✕</button>
+            </div>
+            <p className="text-sm text-white/60">{L.desc[sheet]}</p>
+            <p className="mb-2 mt-4 text-sm font-semibold">{L.region}</p>
+            <div className="flex flex-wrap gap-2">
+              {Object.keys(B.regions).map((r) => <button key={r} onClick={() => { haptic(); setRegion(r); }} className={"min-h-[44px] rounded-full px-4 text-sm " + (region === r ? g + " font-bold" : glass)}>{REGION_LABELS[r]}</button>)}
+            </div>
+            <p className="mb-2 mt-4 text-sm font-semibold">{L.howto}</p>
+            <ol className="space-y-1 text-sm text-white/60"><li>1. {L.act1(plat)}</li><li>2. {L.act2}</li><li>3. {L.act3}</li></ol>
+            <div className="mt-4 space-y-1.5 rounded-xl border border-[#00F0FF]/20 bg-[#00F0FF]/5 p-3 text-sm">
+              {L.sheetTrust.map((s, i) => <p key={i}>🛡️ {s}</p>)}
+            </div>
+            {stockOf(B, plat, sheet, region) > 0 ? (
+              <button onClick={startPay} className={"mt-5 min-h-[52px] w-full rounded-xl font-black " + g} style={{ animation: "glow 3s infinite" }}>
+                {L.buy} {price(B, sheet, region, cur)} {off > 0 && <span className="ml-1 text-xs font-normal line-through opacity-70">{price(B, sheet, region, cur, false)}</span>}
+              </button>
+            ) : <button disabled className="mt-5 min-h-[52px] w-full rounded-xl bg-white/10 font-bold text-white/50">{L.outStock}</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Faq({ q, a }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={glass + " rounded-xl"}>
+      <button onClick={() => { haptic(); setOpen(!open); }} className="flex min-h-[48px] w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm font-semibold">
+        {q}<span className={"shrink-0 transition-transform " + (open ? "rotate-180" : "")}>⌄</span>
+      </button>
+      {open && <p className="px-4 pb-4 text-sm text-white/60">{a}</p>}
+    </div>
+  );
+}
+
+function Pay({ B, L, lang, order, copy, toast, onPaid }) {
+  const [method, setMethod] = useState("stars");
+  const [net, setNet] = useState("ton");
+  const [left, setLeft] = useState(900);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { const t = setInterval(() => setLeft((l) => Math.max(0, l - 1)), 1000); return () => clearInterval(t); }, []);
+  const usdt = usdtV(B, order.ed, order.region).toFixed(2);
+  const usdtOld = usdtV(B, order.ed, order.region, false).toFixed(2);
+  const stars = starsV(B, order.ed, order.region);
+  const addr = net === "ton" ? B.ton : B.trc20;
+  const mm = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+
+  const send = async (m) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const d = await api("/api/order", { edition: order.ed, platform: order.plat, region: order.region, method: m, lang });
+      if (m === "stars") {
+        if (tg && tg.openInvoice) tg.openInvoice(d.invoice_url, (s) => { if (s === "paid") onPaid(d.id); else toast(L.cancelled); });
+        else window.open(d.invoice_url);
+      } else {
+        await api("/api/order/" + d.id + "/paid", {});
+        onPaid(d.id);
+      }
+    } catch (e) { toast(String(e.message)); }
+    setBusy(false);
+  };
+
+  const methods = [["stars", "⭐", "Telegram Stars"], ["binance", "🟡", "Binance Pay"], ["crypto", "👛", L.cryptoLabel]];
+  return (
+    <div className="screen space-y-4 pt-2">
+      <h2 className="text-lg font-bold">{L.pay}</h2>
+      <div className={glass + " rounded-2xl p-4 text-sm"}>
+        <p className="font-bold">{ED_NAMES[order.ed]}</p>
+        <p className="text-white/50">{PL[order.plat]} · {REGION_LABELS[order.region]}</p>
+        <p className="mt-2 text-lg font-black text-[#00F0FF]">{usdt} USDT <span className="text-sm font-normal text-white/50">≈ {stars} ⭐</span></p>
+        {B.discount < 1 && <p className="text-xs text-white/40"><span className="line-through">{usdtOld} USDT</span> · -{Math.round((1 - B.discount) * 100)}%</p>}
+      </div>
+      <div className="rounded-xl border border-[#00F0FF]/30 bg-[#00F0FF]/5 p-3 text-sm">🛡️ {L.payTrust}</div>
+      <div className="grid grid-cols-3 gap-2">
+        {methods.map(([id, ic, l]) => (
+          <button key={id} onClick={() => { haptic(); setMethod(id); }} className={"flex min-h-[64px] flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold " + (method === id ? g : glass)}><span className="text-lg">{ic}</span>{l}</button>
+        ))}
+      </div>
+      {method === "stars" && <button disabled={busy} onClick={() => send("stars")} className={"min-h-[52px] w-full rounded-xl font-black disabled:opacity-50 " + g}>{L.payStars} {stars} ⭐</button>}
+      {method === "binance" && (
+        <div className={glass + " space-y-3 rounded-2xl p-4 text-center"}>
+          <div className="mx-auto grid h-32 w-32 place-items-center rounded-xl bg-white text-6xl text-black">▦</div>
+          <button onClick={() => copy(B.binance)} className="mx-auto flex min-h-[44px] items-center gap-2 font-mono"><span>{L.payId}: {B.binance}</span><span>📋</span></button>
+          <p className="text-sm">{L.amount}: <b className="text-[#00F0FF]">{usdt} USDT</b></p>
+          <button disabled={busy} onClick={() => send("binance")} className={"min-h-[52px] w-full rounded-xl font-black disabled:opacity-50 " + g}>{L.paid}</button>
+        </div>
+      )}
+      {method === "crypto" && (
+        <div className={glass + " space-y-3 rounded-2xl p-4"}>
+          <div className="flex gap-2">
+            {[["ton", "TON"], ["trc20", "USDT TRC-20"]].map(([id, l]) => <button key={id} onClick={() => { haptic(); setNet(id); }} className={"min-h-[44px] flex-1 rounded-xl text-sm font-semibold " + (net === id ? g : "border border-white/10")}>{l}</button>)}
+          </div>
+          <p className="text-sm">{L.amount}: <b className="text-[#00F0FF]">{usdt} USDT</b></p>
+          <button onClick={() => copy(addr)} className="flex min-h-[48px] w-full items-center justify-between gap-2 rounded-lg bg-black/40 px-3 text-left font-mono text-xs"><span className="break-all">{addr}</span><span>📋</span></button>
+          <p className="text-center text-sm text-white/60">{L.left} <b className={left < 60 ? "text-[#FF3E7F]" : "text-white"}>{mm}</b></p>
+          <button disabled={left === 0 || busy} onClick={() => send(net)} className={"min-h-[52px] w-full rounded-xl font-black disabled:opacity-40 " + g}>{L.paid}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Done({ L, id, copy, onKeys }) {
+  const [o, setO] = useState(null);
+  useEffect(() => {
+    let on = true;
+    const tick = async () => {
+      try { const d = await api("/api/order/" + id); if (on) { setO(d); if (d.status === "issued") return; } } catch (e) {}
+      if (on) setTimeout(tick, 3000);
+    };
+    tick();
+    return () => { on = false; };
+  }, [id]);
+  const ok = o && o.status === "issued";
+  return (
+    <div className="screen space-y-4 pt-10 text-center">
+      <div className={"mx-auto flex h-20 w-20 items-center justify-center rounded-full text-4xl " + g}>{ok ? "✓" : "⏳"}</div>
+      <h2 className="text-xl font-black">{ok ? L.success : L.waitTitle}</h2>
+      {ok ? (
+        <>
+          <div className="rounded-xl border border-[#00F0FF]/40 bg-black/40 p-4 font-mono text-lg tracking-widest text-[#00F0FF]">{o.key}</div>
+          <p className="text-sm text-white/70">🛡️ {L.successText}</p>
+          <button onClick={() => copy(o.key)} className="min-h-[48px] w-full rounded-xl border border-white/20 font-semibold">📋 {L.copyKey}</button>
+        </>
+      ) : <p className="text-sm text-white/70">{L.waitText}</p>}
+      <button onClick={onKeys} className={"min-h-[52px] w-full rounded-xl font-black " + g}>{L.toKeys}</button>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
