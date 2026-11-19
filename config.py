@@ -12,6 +12,7 @@ TRC20_ADDRESS = os.getenv("TRC20_ADDRESS", "")
 BINANCE_PAY_ID = os.getenv("BINANCE_PAY_ID", "")
 PORT = int(os.getenv("PORT", "8000"))
 DISCOUNT = float(os.getenv("PRICE_MULTIPLIER", "0.8"))
+REF_PERCENT = float(os.getenv("REF_PERCENT", "7"))
 
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)

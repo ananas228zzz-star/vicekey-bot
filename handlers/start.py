@@ -1,19 +1,24 @@
 from aiogram import Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.types import Message
 
 import config
 import database
-from keyboards.main import webapp_kb
+from keyboards.main import start_kb
 from texts import tr
 
 router = Router()
 
 
 @router.message(CommandStart())
-async def start(m: Message):
+async def start(m: Message, command: CommandObject):
+    ref = None
+    arg = command.args or ""
+    if arg.startswith("ref_") and arg[4:].isdigit():
+        ref = int(arg[4:])
+    await database.register_user(m.from_user.id, ref)
     lang = "en" if (m.from_user.language_code or "ru") != "ru" else "ru"
-    await m.answer(tr(lang)["start"], reply_markup=webapp_kb(lang))
+    await m.answer(tr(lang)["start"], reply_markup=start_kb(lang))
 
 
 @router.message(Command("addkeys"))

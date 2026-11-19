@@ -39,4 +39,13 @@ async def deliver_key(bot: Bot, order_id):
         order["user_id"],
         t["key_ok"].format(name=name, platform=order["platform"].upper(), region=order["region"], key=key),
     )
+    try:
+        acc = await database.accrue_referral(order_id)
+        if acc:
+            await bot.send_message(
+                acc["referrer_id"],
+                f"💸 Вам начислена реферальная комиссия: {acc['commission']:.2f} USDT ({acc['percent']:g}%) за заказ #{order_id}.",
+            )
+    except Exception:
+        pass
     return key

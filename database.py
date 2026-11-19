@@ -1,7 +1,12 @@
 import aiosqlite
 from datetime import datetime
 
+import config
 from config import DB_PATH
+
+
+def now():
+    return datetime.utcnow().strftime("%d.%m.%Y %H:%M")
 
 
 async def init_db():
@@ -30,6 +35,26 @@ async def init_db():
                 lang TEXT NOT NULL DEFAULT 'ru',
                 created TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS users(
+                user_id INTEGER PRIMARY KEY,
+                referrer_id INTEGER,
+                percent REAL,
+                created TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS referral_earnings(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL UNIQUE,
+                referrer_id INTEGER NOT NULL,
+                buyer_id INTEGER NOT NULL,
+                order_usdt REAL NOT NULL,
+                percent REAL NOT NULL,
+                commission REAL NOT NULL,
+                status TEXT NOT NULL,
+                created TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id);
+            CREATE INDEX IF NOT EXISTS idx_earn_referrer ON referral_earnings(referrer_id);
+            INSERT OR IGNORE INTO users(user_id, created) SELECT DISTINCT user_id, 'migrated' FROM orders;
             """
         )
         await db.commit()
@@ -103,8 +128,7 @@ async def user_orders(user_id):
 
 
 async def issue_key(order_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.isolation_level = None
+    async with aiosqlite.connect(DB_PATH, isolation_level=None) as db:
         await db.execute("BEGIN IMMEDIATE")
         cur = await db.execute("SELECT edition, platform, region, key FROM orders WHERE id=?", (order_id,))
         order = await cur.fetchone()
@@ -126,3 +150,98 @@ async def issue_key(order_id):
         await db.execute("UPDATE orders SET status='issued', key=? WHERE id=?", (item[1], order_id))
         await db.execute("COMMIT")
         return item[1]
+
+
+async def register_user(user_id, referrer_id=None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
+        if await cur.fetchone():
+            return False
+        ref = None
+        if referrer_id and referrer_id != user_id:
+            cur = await db.execute("SELECT 1 FROM users WHERE user_id=?", (referrer_id,))
+            if await cur.fetchone():
+                ref = referrer_id
+        await db.execute(
+            "INSERT OR IGNORE INTO users(user_id, referrer_id, created) VALUES(?,?,?)",
+            (user_id, ref, now()),
+        )
+        await db.commit()
+        return True
+
+
+async def get_percent(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT percent FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+    if row and row[0] is not None:
+        return float(row[0]), True
+    return config.REF_PERCENT, False
+
+
+async def set_percent(user_id, percent):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO users(user_id, percent, created) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET percent=excluded.percent",
+            (user_id, percent, now()),
+        )
+        await db.commit()
+
+
+async def reset_percent(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET percent=NULL WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def ref_stats(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM users WHERE referrer_id=?", (user_id,))
+        invited = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COUNT(DISTINCT buyer_id), COUNT(*), COALESCE(SUM(order_usdt),0), COALESCE(SUM(commission),0) FROM referral_earnings WHERE referrer_id=? AND status='accrued'",
+            (user_id,),
+        )
+        buyers, purchases, total, earned = await cur.fetchone()
+    return {"invited": invited, "buyers": buyers, "purchases": purchases, "sum": float(total), "earned": float(earned)}
+
+
+async def accrue_referral(order_id):
+    async with aiosqlite.connect(DB_PATH, isolation_level=None) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT user_id, usdt, status FROM orders WHERE id=?", (order_id,))
+        order = await cur.fetchone()
+        if not order or order[2] != "issued":
+            await db.execute("ROLLBACK")
+            return None
+        cur = await db.execute("SELECT 1 FROM referral_earnings WHERE order_id=?", (order_id,))
+        if await cur.fetchone():
+            await db.execute("ROLLBACK")
+            return None
+        buyer = order[0]
+        cur = await db.execute("SELECT referrer_id FROM users WHERE user_id=?", (buyer,))
+        row = await cur.fetchone()
+        if not row or not row[0] or row[0] == buyer:
+            await db.execute("ROLLBACK")
+            return None
+        referrer = row[0]
+        cur = await db.execute("SELECT percent FROM users WHERE user_id=?", (referrer,))
+        prow = await cur.fetchone()
+        percent = float(prow[0]) if prow and prow[0] is not None else config.REF_PERCENT
+        commission = round(order[1] * percent / 100, 2)
+        await db.execute(
+            "INSERT INTO referral_earnings(order_id, referrer_id, buyer_id, order_usdt, percent, commission, status, created) VALUES(?,?,?,?,?,?,?,?)",
+            (order_id, referrer, buyer, order[1], percent, commission, "accrued", now()),
+        )
+        await db.execute("COMMIT")
+        return {"referrer_id": referrer, "commission": commission, "percent": percent}
+
+
+async def cancel_referral(order_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE referral_earnings SET status='cancelled' WHERE order_id=? AND status='accrued'",
+            (order_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0

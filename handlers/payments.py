@@ -20,6 +20,9 @@ async def paid(m: Message, bot: Bot):
     if not payload.startswith("order:"):
         return
     order_id = int(payload.split(":")[1])
+    order = await database.get_order(order_id)
+    if not order or order["status"] in ("issued", "refunded"):
+        return
     await database.set_status(order_id, "paid")
     await deliver_key(bot, order_id)
 
@@ -31,7 +34,7 @@ async def confirm(c: CallbackQuery, bot: Bot):
         return
     order_id = int(c.data.split(":")[1])
     order = await database.get_order(order_id)
-    if not order or order["status"] == "issued":
+    if not order or order["status"] in ("issued", "refunded"):
         await c.answer("Уже обработан")
         return
     await database.set_status(order_id, "paid")
@@ -48,7 +51,7 @@ async def reject(c: CallbackQuery, bot: Bot):
         return
     order_id = int(c.data.split(":")[1])
     order = await database.get_order(order_id)
-    if not order or order["status"] == "issued":
+    if not order or order["status"] in ("issued", "refunded"):
         await c.answer("Уже обработан")
         return
     await database.set_status(order_id, "rejected")

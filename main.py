@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 import config
 import database
 from api.server import create_app
-from handlers import start, payments
+from handlers import start, payments, referral, admin
 
 
 async def main():
@@ -18,6 +18,8 @@ async def main():
     bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_router(start.router)
+    dp.include_router(admin.router)
+    dp.include_router(referral.router)
     dp.include_router(payments.router)
     app = create_app(bot)
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=config.PORT, log_level="info"))
