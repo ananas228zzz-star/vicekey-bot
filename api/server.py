@@ -30,6 +30,8 @@ def create_app(bot: Bot):
             raise HTTPException(status_code=401, detail="unauthorized")
         if not user:
             raise HTTPException(status_code=401, detail="unauthorized")
+        await database.register_user(user.id, None, user.username)
+        await database.touch_activity(user.id)
         return user.id
 
     @app.get("/")
@@ -52,6 +54,17 @@ def create_app(bot: Bot):
             "ton": config.TON_ADDRESS,
             "trc20": config.TRC20_ADDRESS,
             "binance": config.BINANCE_PAY_ID,
+        }
+
+    @app.get("/api/referral")
+    async def referral(uid: int = Depends(auth)):
+        me = await bot.me()
+        percent, custom = await database.get_percent(uid)
+        return {
+            "link": f"https://t.me/{me.username}?start=ref_{uid}",
+            "percent": percent,
+            "custom": custom,
+            "stats": await database.ref_stats(uid),
         }
 
     @app.post("/api/order")

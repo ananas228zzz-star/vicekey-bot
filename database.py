@@ -1,3 +1,5 @@
+import time
+
 import aiosqlite
 from datetime import datetime
 
@@ -56,6 +58,24 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_earn_referrer ON referral_earnings(referrer_id);
             INSERT OR IGNORE INTO users(user_id, created) SELECT DISTINCT user_id, 'migrated' FROM orders;
             """
+        )
+        cur = await db.execute("PRAGMA table_info(users)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "username" not in cols:
+            await db.execute("ALTER TABLE users ADD COLUMN username TEXT")
+        if "last_activity" not in cols:
+            await db.execute("ALTER TABLE users ADD COLUMN last_activity INTEGER")
+            await db.execute("ALTER TABLE users ADD COLUMN reminder_stage INTEGER NOT NULL DEFAULT 0")
+            await db.execute("ALTER TABLE users ADD COLUMN has_purchased INTEGER NOT NULL DEFAULT 0")
+            await db.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0")
+            await db.execute("ALTER TABLE users ADD COLUMN last_reminder_at INTEGER")
+            await db.execute("UPDATE users SET last_activity=?", (int(time.time()),))
+            await db.execute(
+                "UPDATE users SET has_purchased=1 WHERE user_id IN (SELECT user_id FROM orders WHERE status IN ('issued','paid','paid_no_stock'))"
+            )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(lower(username))")
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_remind ON users(has_purchased, is_blocked, reminder_stage, last_activity)"
         )
         await db.commit()
 
@@ -152,10 +172,22 @@ async def issue_key(order_id):
         return item[1]
 
 
-async def register_user(user_id, referrer_id=None):
+async def register_user(user_id, referrer_id=None, username=None):
+    uname = username.lstrip("@") if username else None
     async with aiosqlite.connect(DB_PATH) as db:
+        if uname:
+            await db.execute(
+                "UPDATE users SET username=NULL WHERE lower(username)=lower(?) AND user_id!=?",
+                (uname, user_id),
+            )
         cur = await db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
         if await cur.fetchone():
+            if uname:
+                await db.execute(
+                    "UPDATE users SET username=? WHERE user_id=? AND (username IS NULL OR username!=?)",
+                    (uname, user_id, uname),
+                )
+            await db.commit()
             return False
         ref = None
         if referrer_id and referrer_id != user_id:
@@ -163,11 +195,29 @@ async def register_user(user_id, referrer_id=None):
             if await cur.fetchone():
                 ref = referrer_id
         await db.execute(
-            "INSERT OR IGNORE INTO users(user_id, referrer_id, created) VALUES(?,?,?)",
-            (user_id, ref, now()),
+            "INSERT OR IGNORE INTO users(user_id, referrer_id, username, created, last_activity) VALUES(?,?,?,?,?)",
+            (user_id, ref, uname, now(), int(time.time())),
         )
         await db.commit()
         return True
+
+
+async def get_user(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT user_id, username, referrer_id, percent FROM users WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def find_user_by_username(username):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            (username.lstrip("@"),),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
 
 
 async def get_percent(user_id):
@@ -245,3 +295,64 @@ async def cancel_referral(order_id):
         )
         await db.commit()
         return cur.rowcount > 0
+
+
+async def touch_activity(user_id, from_bot=False):
+    ts = int(time.time())
+    async with aiosqlite.connect(DB_PATH) as db:
+        if from_bot:
+            await db.execute(
+                "UPDATE users SET last_activity=?, reminder_stage=0, last_reminder_at=NULL, is_blocked=0 WHERE user_id=?",
+                (ts, user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET last_activity=?, reminder_stage=0, last_reminder_at=NULL WHERE user_id=? AND (last_activity IS NULL OR last_activity<? OR reminder_stage!=0)",
+                (ts, user_id, ts - 60),
+            )
+        await db.commit()
+
+
+async def mark_purchased(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET has_purchased=1 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def set_blocked(user_id, flag):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET is_blocked=? WHERE user_id=?", (1 if flag else 0, user_id))
+        await db.commit()
+
+
+async def due_reminders(now_ts, delays, min_gap, limit):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT u.user_id, u.reminder_stage, u.last_activity FROM users u
+            WHERE u.has_purchased=0 AND u.is_blocked=0 AND u.last_activity IS NOT NULL
+              AND (
+                (u.reminder_stage=0 AND u.last_activity<=?)
+                OR (u.reminder_stage=1 AND u.last_activity<=?)
+                OR (u.reminder_stage=2 AND u.last_activity<=?)
+              )
+              AND (u.last_reminder_at IS NULL OR u.last_reminder_at<=?)
+              AND NOT EXISTS (
+                SELECT 1 FROM orders o WHERE o.user_id=u.user_id
+                AND o.status IN ('pending_review','paid','paid_no_stock','issued')
+              )
+            ORDER BY u.last_activity
+            LIMIT ?
+            """,
+            (now_ts - delays[1], now_ts - delays[2], now_ts - delays[3], now_ts - min_gap, limit),
+        )
+        return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+
+
+async def set_stage(user_id, stage, ts, last_activity):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET reminder_stage=?, last_reminder_at=? WHERE user_id=? AND last_activity=?",
+            (stage, ts, user_id, last_activity),
+        )
+        await db.commit()

@@ -25,6 +25,7 @@ async def deliver_key(bot: Bot, order_id):
     if not order:
         return None
     t = tr(order["lang"])
+    await database.mark_purchased(order["user_id"])
     key = await database.issue_key(order_id)
     if not key:
         await database.set_status(order_id, "paid_no_stock")

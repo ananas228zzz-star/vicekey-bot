@@ -1,32 +1,36 @@
-import asyncio
-import logging
-
-import uvicorn
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 import config
-import database
-from api.server import create_app
-from handlers import start, payments, referral, admin
+from texts import tr
 
 
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    await database.init_db()
-    bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
-    dp.include_router(start.router)
-    dp.include_router(admin.router)
-    dp.include_router(referral.router)
-    dp.include_router(payments.router)
-    app = create_app(bot)
-    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=config.PORT, log_level="info"))
-    asyncio.create_task(server.serve())
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+def webapp_kb(lang="ru"):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=tr(lang)["open"], web_app=WebAppInfo(url=config.WEBAPP_URL))]]
+    )
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+def admin_kb(order_id):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"ok:{order_id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"no:{order_id}"),
+            ]
+        ]
+    )
+
+
+def admin_menu_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="👥 Рефералы", callback_data="adm:ref")]]
+    )
+
+
+def admin_ref_kb(uid, default_percent):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить процент", callback_data=f"adm:set:{uid}")],
+            [InlineKeyboardButton(text=f"♻️ Сбросить до {default_percent:g}%", callback_data=f"adm:reset:{uid}")],
+        ]
+    )

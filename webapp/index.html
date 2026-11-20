@@ -49,6 +49,11 @@ const T = {
     copyKey: "Скопировать ключ", toKeys: "Перейти в «Мои ключи»", myKeys: "Мои ключи", issued: "Выдан", pending: "Ожидает оплаты",
     pendingText: "Ключ появится сразу после подтверждения оплаты.", emptyText: "Здесь появятся купленные ключи", toCatalog: "В каталог",
     askSupport: "Написать в поддержку", loadErr: "Откройте магазин через бота в Telegram.", payId: "Pay ID",
+    referrals: "Рефералы", refTitle: "Реферальная программа", refPercentLabel: "Ваша комиссия", refCustom: "индивидуальная", refDefault: "стандартная",
+    refLinkLabel: "Ваша реферальная ссылка", copyLink: "Скопировать ссылку", share: "Поделиться", refInvited: "Приглашено пользователей", refBuyers: "Из них купили",
+    refPurchases: "Успешных покупок", refSum: "Сумма покупок", refEarned: "Заработано",
+    refHow: "Отправьте ссылку друзьям или опубликуйте в канале. Когда приглашённый купит игру, вы получите комиссию от суммы заказа. Покупатель платит обычную цену.",
+    shareText: "Ключи GTA VI со скидкой 20%",
     banner: ["Мгновенная выдача", "Гарантия замены", "Проверенные ключи"],
     sheetTrust: ["Ключ придёт сразу после оплаты", "Если ключ не подойдёт — заменим или вернём деньги", "Каждый ключ проверяем перед выдачей"],
     payTrust: "Сразу после оплаты мы пришлём вам ключ — он появится здесь, в чате с ботом и во вкладке «Мои ключи». Деньги списываются только за выданный ключ.",
@@ -72,6 +77,11 @@ const T = {
     copyKey: "Copy key", toKeys: "Go to “My keys”", myKeys: "My keys", issued: "Issued", pending: "Awaiting payment",
     pendingText: "Your key will appear right after the payment is confirmed.", emptyText: "Purchased keys will appear here", toCatalog: "To catalog",
     askSupport: "Contact support", loadErr: "Open the store through the bot in Telegram.", payId: "Pay ID",
+    referrals: "Referrals", refTitle: "Referral program", refPercentLabel: "Your commission", refCustom: "individual", refDefault: "standard",
+    refLinkLabel: "Your referral link", copyLink: "Copy link", share: "Share", refInvited: "Users invited", refBuyers: "Of them purchased",
+    refPurchases: "Successful purchases", refSum: "Purchases total", refEarned: "Earned",
+    refHow: "Send the link to friends or post it in your channel. When an invited user buys the game, you get a commission from the order amount. The buyer pays the regular price.",
+    shareText: "GTA VI keys with 20% off",
     banner: ["Instant delivery", "Replacement guarantee", "Verified keys"],
     sheetTrust: ["Your key arrives right after payment", "If a key fails, we replace it or refund you", "Every key is checked before delivery"],
     payTrust: "Right after payment we will send you the key — it shows up here, in your bot chat and in “My keys”. You are charged only for a delivered key.",
@@ -259,6 +269,8 @@ function App() {
           </div>
         )}
 
+        {step === "browse" && tab === "ref" && <Referral L={L} copy={copy} />}
+
         {step === "browse" && tab === "support" && (
           <div className="screen space-y-3 pt-2">
             <h2 className="text-lg font-bold">{L.support}</h2>
@@ -270,7 +282,7 @@ function App() {
 
       {step === "browse" && (
         <nav className="absolute inset-x-0 bottom-0 z-20 flex border-t border-white/10 backdrop-blur-md" style={{ paddingBottom: "env(safe-area-inset-bottom)", background: "rgba(11,9,20,.85)" }}>
-          {[["catalog", "🛒", L.catalog], ["keys", "🔑", L.keys], ["support", "💬", L.support]].map(([id, ic, l]) => (
+          {[["catalog", "🛒", L.catalog], ["keys", "🔑", L.keys], ["ref", "👥", L.referrals], ["support", "💬", L.support]].map(([id, ic, l]) => (
             <button key={id} onClick={() => { haptic(); setTab(id); }} className={"flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 text-xs " + (tab === id ? "text-[#FF3E7F]" : "text-white/50")}>
               <span className="text-xl">{ic}</span>{l}
             </button>
@@ -303,6 +315,48 @@ function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Referral({ L, copy }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => { api("/api/referral").then(setD).catch(() => setErr(true)); }, []);
+  if (err) return <p className="pt-10 text-center text-white/60">{L.loadErr}</p>;
+  if (!d) return <p className="pt-10 text-center text-white/60">...</p>;
+  const st = d.stats;
+  const share = () => {
+    haptic();
+    const u = "https://t.me/share/url?url=" + encodeURIComponent(d.link) + "&text=" + encodeURIComponent(L.shareText);
+    tg && tg.openTelegramLink ? tg.openTelegramLink(u) : window.open(u);
+  };
+  const rows = [
+    [L.refInvited, st.invited], [L.refBuyers, st.buyers], [L.refPurchases, st.purchases],
+    [L.refSum, st.sum.toFixed(2) + " USDT"], [L.refEarned, st.earned.toFixed(2) + " USDT"],
+  ];
+  return (
+    <div className="screen space-y-4 pt-2">
+      <h2 className="text-lg font-bold">{L.refTitle}</h2>
+      <div className={glass + " rounded-2xl p-5 text-center"}>
+        <p className="text-sm text-white/60">{L.refPercentLabel}</p>
+        <p className={"text-5xl font-black bg-clip-text text-transparent " + g}>{d.percent}%</p>
+        <p className="mt-1 text-xs text-white/50">{d.custom ? L.refCustom : L.refDefault}</p>
+      </div>
+      <div className={glass + " space-y-3 rounded-2xl p-4"}>
+        <p className="text-sm font-semibold">{L.refLinkLabel}</p>
+        <div className="break-all rounded-lg bg-black/40 p-3 font-mono text-xs">{d.link}</div>
+        <div className="flex gap-2">
+          <button onClick={() => copy(d.link)} className="min-h-[48px] flex-1 rounded-xl border border-white/20 font-semibold">📋 {L.copyLink}</button>
+          <button onClick={share} className={"min-h-[48px] flex-1 rounded-xl font-bold " + g}>✈️ {L.share}</button>
+        </div>
+      </div>
+      <div className={glass + " divide-y divide-white/10 rounded-2xl"}>
+        {rows.map(([l, v], i) => (
+          <div key={i} className="flex items-center justify-between px-4 py-3 text-sm"><span className="text-white/60">{l}</span><b>{v}</b></div>
+        ))}
+      </div>
+      <p className="text-sm text-white/60">{L.refHow}</p>
     </div>
   );
 }
